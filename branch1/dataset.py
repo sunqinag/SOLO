@@ -14,8 +14,9 @@ import os
 import numpy as np
 from private_tools.diabetic_package.file_operator.bz_path import get_file_path
 from private_tools.imgFileOpterator import Img_processing as process
-from diabetic_package.image_processing_operator.python_data_augmentation.python_base_data_augmentation import resize_image_and_label
-import self_format.cfg as cfg
+from private_tools.diabetic_package.image_processing_operator.python_data_augmentation.python_base_data_augmentation import resize_image_and_label
+import branch1.cfg as cfg
+import tensorflow as tf
 
 class Dataset:
     def __init__(self, image_list, label_list):
@@ -30,67 +31,61 @@ class Dataset:
         self.stride = np.array(cfg.STRIDES)
         self.anchors = np.array(cfg.ANCHORS).reshape(3, 3, 2)
         self.num_batchs = int(np.ceil(self.num_sample / self.batch_size))
+        self.batch_count = 0
+
+    def __iter__(self):
+        return self
 
     def __next__(self):
         '''该函数最终返回的是：按batch_size大小返回图像、大中小标记框的标签及坐标信息。'''
-        self.output_size = np.array(cfg.INPUT_SIZE) // np.array(cfg.STRIDES)
+        with tf.device('/cpu:0'):
+            self.train_input_size = cfg.INPUT_SIZE
+            self.output_size = np.array(self.train_input_size) // np.array(cfg.STRIDES)
 
-        # batch_image [batch_size,input_size[0],input_size[1],3]
-        batch_image = np.zeros((self.batch_size, cfg.INPUT_SIZE, cfg.INPUT_SIZE, 3))
+            # batch_image [batch_size,input_size[0],input_size[1],3]
+            batch_image = np.zeros((self.batch_size, self.train_input_size, self.train_input_size, 3))
 
-        # batch_size*52*52*ANCHOR_PER_SCALE*class_num+1
-        batch_label_sbbox = np.zeros((self.batch_size, 52, 52, self.anchor_per_scale, 5 + self.num_classes))
-        # batch_size*26*26*ANCHOR_PER_SCALE*class_num+1
-        batch_label_mbbox = np.zeros((self.batch_size, 26, 26, self.anchor_per_scale, 5 + self.num_classes))
-        # batch_size*13*13*ANCHOR_PER_SCALE*class_num+1
-        batch_label_lbbox = np.zeros((self.batch_size, 13, 13, self.anchor_per_scale, 5 + self.num_classes))
+            # batch_size*52*52*ANCHOR_PER_SCALE*class_num+1
+            batch_label_sbbox = np.zeros((self.batch_size, self.output_size[0], self.output_size[0], self.anchor_per_scale, 5 + self.num_classes))
+            # batch_size*26*26*ANCHOR_PER_SCALE*class_num+1
+            batch_label_mbbox = np.zeros((self.batch_size, self.output_size[1], self.output_size[1], self.anchor_per_scale, 5 + self.num_classes))
+            # batch_size*13*13*ANCHOR_PER_SCALE*class_num+1
+            batch_label_lbbox = np.zeros((self.batch_size, self.output_size[2], self.output_size[2], self.anchor_per_scale, 5 + self.num_classes))
 
-        ## batch_size*150*4
-        batch_sbboxes = np.zeros((self.batch_size, self.max_bbox_per_scale, 4))
-        batch_mbboxes = np.zeros((self.batch_size, self.max_bbox_per_scale, 4))
-        batch_lbboxes = np.zeros((self.batch_size, self.max_bbox_per_scale, 4))
+            ## batch_size*150*4
+            batch_sbboxes = np.zeros((self.batch_size, self.max_bbox_per_scale, 4))
+            batch_mbboxes = np.zeros((self.batch_size, self.max_bbox_per_scale, 4))
+            batch_lbboxes = np.zeros((self.batch_size, self.max_bbox_per_scale, 4))
 
-        num = 0
-        self.batch_count = 0
-        if self.batch_count < self.num_batchs:
-            while num < self.batch_size:
-                index = self.batch_count * self.batch_size + num  # 计算获取图像的索引
-                if index > self.num_sample: index -= self.num_sample  # 如果索引超出了图像数量，则减去图像数量，从头开始
-                #这里用的还是原图尺寸
-                image = cv2.imread(self.image_list[index])
-                print('图像：',os.path.split(self.image_list[index])[-1])
-                bboxes = process().parseBoxAndLabel(self.label_list[index])  # 获得原始的图像和标记框
-                #要将原图尺寸变为416*416尺寸
-                resized_image,reized_bboxes = resize_image_and_label(image,bboxes,(cfg.INPUT_SIZE,cfg.INPUT_SIZE))
-                # bboxes = process().parseBoxAndLabel('../train/labels/20200513150210348-E960G7.txt')
-                # self._view_image_and_box(resized_image,reized_bboxes)
-                label_sbbox, label_mbbox, label_lbbox, sbboxes, mbboxes, lbboxes = self._processing(bboxes)
-                # for i in range(150):
-                #     if np.any(sbboxes[i, :]):
-                #         print('尺寸:52*52')
-                #         print(sbboxes[i, :])
-                #     if np.any(mbboxes[i, :]):
-                #         print('尺寸:26*26')
-                #         print(mbboxes[i, :])
-                #
-                #     if np.any(lbboxes[i, :]):
-                #         print('尺寸:13*13')
-                #         print(lbboxes[i, :])
+            num = 0
+            if self.batch_count < self.num_batchs:
+                while num < self.batch_size:
+                    index = self.batch_count * self.batch_size + num  # 计算获取图像的索引
+                    if index >= self.num_sample: index -= self.num_sample  # 如果索引超出了图像数量，则减去图像数量，从头开始
+                    #这里用的还是原图尺寸
+                    image = cv2.imread(self.image_list[index])
+                    # print('图像：',os.path.split(self.image_list[index])[-1])
+                    bboxes = process().parseBoxAndLabel(self.label_list[index])  # 获得原始的图像和标记框
+                    #要将原图尺寸变为416*416尺寸
+                    resized_image,reized_bboxes = resize_image_and_label(image,bboxes,(cfg.INPUT_SIZE,cfg.INPUT_SIZE))
+                    # bboxes = process().parseBoxAndLabel('../train/labels/20200513150210348-E960G7.txt')
+                    # self._view_image_and_box(resized_image,reized_bboxes)
+                    label_sbbox, label_mbbox, label_lbbox, sbboxes, mbboxes, lbboxes = self._processing(bboxes)
 
-                batch_image[num, :, :, :] = resized_image
-                batch_label_sbbox[num, :, :, :, :] = label_sbbox
-                batch_label_mbbox[num, :, :, :, :] = label_mbbox
-                batch_label_lbbox[num, :, :, :, :] = label_lbbox
+                    batch_image[num, :, :, :] = resized_image
+                    batch_label_sbbox[num, :, :, :, :] = label_sbbox
+                    batch_label_mbbox[num, :, :, :, :] = label_mbbox
+                    batch_label_lbbox[num, :, :, :, :] = label_lbbox
 
-                batch_sbboxes[num, :, :] = sbboxes
-                batch_mbboxes[num, :, :] = mbboxes
-                batch_lbboxes[num, :, :] = lbboxes
-                num += 1
-            self.batch_count += 1
-            return batch_image, batch_label_sbbox, batch_label_mbbox, batch_label_lbbox, \
-                   batch_sbboxes, batch_mbboxes, batch_lbboxes
-        else:
-            raise StopIteration #结束
+                    batch_sbboxes[num, :, :] = sbboxes
+                    batch_mbboxes[num, :, :] = mbboxes
+                    batch_lbboxes[num, :, :] = lbboxes
+                    num += 1
+                self.batch_count += 1
+                return batch_image, batch_label_sbbox, batch_label_mbbox, batch_label_lbbox, \
+                       batch_sbboxes, batch_mbboxes, batch_lbboxes
+            else:
+                raise StopIteration #结束
 
     def _view_image_and_box(self,origimg,box):
 
@@ -211,12 +206,13 @@ class Dataset:
         return self.num_batchs
 
 if __name__ == '__main__':
-
+    from tqdm import tqdm
     image_dir = '../train/images'
     label_dir = '../train/labels'
     image_list = sorted(get_file_path(image_dir, ret_full_path=True))
     label_list = sorted(get_file_path(label_dir, ret_full_path=True))
     train = Dataset(image_list=image_list, label_list=label_list)
-    while 1:
-        data = next(train)
-        d=0
+    pbar = tqdm(train)
+    for i in range(100):
+        for train_data in pbar:
+            pass
